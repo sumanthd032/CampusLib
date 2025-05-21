@@ -23,7 +23,7 @@ class TransactionProvider with ChangeNotifier {
       final response = await http.get(
         Uri.parse('http://localhost:5000/api/transactions'),
         headers: {
-          'Authorization': 'BearerAnywhere $token',
+          'Authorization': 'Bearer $token',  // Fixed: Removed "Anywhere"
           'Content-Type': 'application/json',
         },
       );
@@ -33,8 +33,8 @@ class TransactionProvider with ChangeNotifier {
         _transactions = (data['transactions'] as List)
             .map((t) => Transaction.fromJson(t))
             .toList();
-      } else if (response.statusCode == 422) {
-        _errorMessage = 'Session expired. Please log in again.';
+      } else if (response.statusCode == 401) {
+        _errorMessage = 'Unauthorized. Please log in again.';
         throw Exception('Invalid token');
       } else {
         final errorData = jsonDecode(response.body);
@@ -70,8 +70,8 @@ class TransactionProvider with ChangeNotifier {
             .map((t) => Transaction.fromJson(t))
             .toList();
         _totalFine = (data['total_fine'] as num?)?.toDouble() ?? 0.0;
-      } else if (response.statusCode == 422) {
-        _errorMessage = 'Session expired. Please log in again.';
+      } else if (response.statusCode == 401) {
+        _errorMessage = 'Unauthorized. Please log in again.';
         throw Exception('Invalid token');
       } else {
         final errorData = jsonDecode(response.body);
@@ -101,7 +101,7 @@ class TransactionProvider with ChangeNotifier {
         }),
       );
       print('confirmBorrow response: ${response.statusCode} ${response.body}');
-      if (response.statusCode == 422) {
+      if (response.statusCode == 401) {
         throw Exception('Invalid token');
       }
       if (response.statusCode != 200) {
@@ -129,7 +129,7 @@ class TransactionProvider with ChangeNotifier {
         }),
       );
       print('confirmReturn response: ${response.statusCode} ${response.body}');
-      if (response.statusCode == 422) {
+      if (response.statusCode == 401) {
         throw Exception('Invalid token');
       }
       if (response.statusCode != 200) {
