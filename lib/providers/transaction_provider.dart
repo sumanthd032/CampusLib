@@ -23,7 +23,7 @@ class TransactionProvider with ChangeNotifier {
       final response = await http.get(
         Uri.parse('http://localhost:5000/api/transactions'),
         headers: {
-          'Authorization': 'Bearer $token',  // Fixed: Removed "Anywhere"
+          'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
         },
       );
@@ -80,6 +80,80 @@ class TransactionProvider with ChangeNotifier {
     } catch (e) {
       _errorMessage = 'Error fetching user transactions: $e';
       print('fetchUserTransactions error: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> requestFinePayment(String token) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:5000/api/request-fine-payment'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+      print('requestFinePayment response: ${response.statusCode} ${response.body}');
+      if (response.statusCode == 200) {
+        // Refresh transactions to update total fine and payment status
+        await fetchUserTransactions(token);
+      } else if (response.statusCode == 401) {
+        _errorMessage = 'Unauthorized. Please log in again.';
+        throw Exception('Invalid token');
+      } else {
+        final errorData = jsonDecode(response.body);
+        _errorMessage = errorData['message'] ?? 'Failed to request fine payment: ${response.statusCode}';
+        throw Exception(_errorMessage);
+      }
+    } catch (e) {
+      _errorMessage = 'Error requesting fine payment: $e';
+      print('requestFinePayment error: $e');
+      throw Exception('Error requesting fine payment: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> adminPayFine(String token, int userId, bool approve) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:5000/api/admin/pay-fine'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'user_id': userId,
+          'approve': approve,
+        }),
+      );
+      print('adminPayFine response: ${response.statusCode} ${response.body}');
+      if (response.statusCode == 200) {
+        // Refresh transactions to reflect updated payment status
+        await fetchTransactions(token);
+      } else if (response.statusCode == 401) {
+        _errorMessage = 'Unauthorized. Please log in again.';
+        throw Exception('Invalid token');
+      } else {
+        final errorData = jsonDecode(response.body);
+        _errorMessage = errorData['message'] ?? 'Failed to process fine payment: ${response.statusCode}';
+        throw Exception(_errorMessage);
+      }
+    } catch (e) {
+      _errorMessage = 'Error processing fine payment: $e';
+      print('adminPayFine error: $e');
+      throw Exception('Error processing fine payment: $e');
     } finally {
       _isLoading = false;
       notifyListeners();

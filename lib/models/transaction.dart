@@ -8,6 +8,7 @@ class Transaction {
   final String status;
   final double fine;
   final bool finePaid;
+  final String? paymentStatus; // Added paymentStatus field
 
   Transaction({
     required this.id,
@@ -19,19 +20,21 @@ class Transaction {
     required this.status,
     required this.fine,
     required this.finePaid,
+    this.paymentStatus,
   });
 
   factory Transaction.fromJson(Map<String, dynamic> json) {
     return Transaction(
-      id: json['id'] as int? ?? (throw Exception('Transaction id cannot be null')),
-      userId: json['user_id'] as int? ?? (throw Exception('Transaction user_id cannot be null')),
-      bookId: json['book_id'] as int? ?? (throw Exception('Transaction book_id cannot be null')),
-      borrowDate: json['borrow_date'] as String? ?? (throw Exception('Transaction borrow_date cannot be null')),
+      id: json['id'] as int,
+      userId: json['user_id'] as int,
+      bookId: json['book_id'] as int,
+      borrowDate: json['borrow_date'] as String,
       dueDate: json['due_date'] as String?,
       returnDate: json['return_date'] as String?,
-      status: json['status'] as String? ?? (throw Exception('Transaction status cannot be null')),
-      fine: (json['fine'] as num?)?.toDouble() ?? 0.0,
-      finePaid: json['fine_paid'] as bool? ?? false,  
+      status: json['status'] as String,
+      fine: (json['fine'] as num).toDouble(),
+      finePaid: json['fine_paid'] as bool,
+      paymentStatus: json['payment_status'] as String?,
     );
   }
 }

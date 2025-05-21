@@ -155,6 +155,97 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
+  void _showMarkAsPaidDialog(int userId, double totalFine) {
+    showDialog(
+      context: context,
+      builder: (context) => FadeIn(
+        duration: Duration(milliseconds: 300),
+        child: AlertDialog(
+          title: Text('Approve Fine Payment', style: GoogleFonts.poppins(color: AppColors.primary)),
+          content: Text(
+            'User $userId has requested to pay a fine of \$${totalFine.toStringAsFixed(2)}. Approve or reject this request?',
+            style: GoogleFonts.poppins(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                final transactionProvider = Provider.of<TransactionProvider>(context, listen: false);
+                final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                try {
+                  setState(() {
+                    _isLoading = true;
+                  });
+                  await transactionProvider.adminPayFine(authProvider.token!, userId, false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Fine payment request rejected.'),
+                      backgroundColor: AppColors.error,
+                    ),
+                  );
+                } catch (e) {
+                  if (e.toString().contains('Invalid token')) {
+                    await authProvider.logout();
+                    Navigator.pushReplacementNamed(context, '/login');
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error rejecting payment: $e'),
+                        backgroundColor: AppColors.error,
+                      ),
+                    );
+                  }
+                } finally {
+                  setState(() {
+                    _isLoading = false;
+                  });
+                }
+              },
+              child: Text('Reject', style: GoogleFonts.poppins(color: AppColors.error)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                final transactionProvider = Provider.of<TransactionProvider>(context, listen: false);
+                final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                try {
+                  setState(() {
+                    _isLoading = true;
+                  });
+                  await transactionProvider.adminPayFine(authProvider.token!, userId, true);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Fine payment approved!'),
+                      backgroundColor: AppColors.accent,
+                    ),
+                  );
+                } catch (e) {
+                  if (e.toString().contains('Invalid token')) {
+                    await authProvider.logout();
+                    Navigator.pushReplacementNamed(context, '/login');
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error approving payment: $e'),
+                        backgroundColor: AppColors.error,
+                      ),
+                    );
+                  }
+                } finally {
+                  setState(() {
+                    _isLoading = false;
+                  });
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+              child: Text('Approve', style: GoogleFonts.poppins()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _qrController?.dispose();
@@ -535,6 +626,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                 itemCount: transactionProvider.transactions.length,
                                 itemBuilder: (context, index) {
                                   final transaction = transactionProvider.transactions[index];
+                                  // Calculate total pending fine for this user
+                                  final userTransactions = transactionProvider.transactions
+                                      .where((t) => t.userId == transaction.userId && !t.finePaid && t.fine > 0 && t.paymentStatus == 'pending')
+                                      .toList();
+                                  final totalPendingFine = userTransactions.fold<double>(0, (sum, t) => sum + t.fine);
+
                                   return Card(
                                     elevation: 5,
                                     margin: EdgeInsets.symmetric(vertical: 10),
@@ -544,9 +641,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                         style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
                                       ),
                                       subtitle: Text(
-                                        'User ID: ${transaction.userId} | Book ID: ${transaction.bookId} | Date: ${transaction.borrowDate} | Due: ${transaction.dueDate ?? 'N/A'} | Status: ${transaction.status}${transaction.returnDate != null ? ' | Returned on: ${transaction.returnDate}' : ''} | Fine: \$${transaction.fine.toStringAsFixed(2)}',
+                                        'User ID: ${transaction.userId} | Book ID: ${transaction.bookId} | Date: ${transaction.borrowDate} | Due: ${transaction.dueDate ?? 'N/A'} | Status: ${transaction.status}${transaction.returnDate != null ? ' | Returned on: ${transaction.returnDate}' : ''} | Fine: \$${transaction.fine.toStringAsFixed(2)}${transaction.finePaid ? ' (Paid)' : transaction.paymentStatus != null ? ' (${transaction.paymentStatus})' : ''}',
                                         style: GoogleFonts.poppins(),
                                       ),
+                                      trailing: totalPendingFine > 0 && transaction.paymentStatus == 'pending'
+                                          ? ElevatedButton(
+                                              onPressed: () {
+                                                _showMarkAsPaidDialog(transaction.userId, totalPendingFine);
+                                              },
+                                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+                                              child: Text('Mark as Paid', style: GoogleFonts.poppins()),
+                                            )
+                                          : null,
                                     ),
                                   );
                                 },

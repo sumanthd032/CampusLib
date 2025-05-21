@@ -121,11 +121,78 @@ class _ReaderDashboardState extends State<ReaderDashboard> {
     );
   }
 
+  void _showPaymentRequestDialog(double totalFine) {
+    showDialog(
+      context: context,
+      builder: (context) => FadeIn(
+        duration: Duration(milliseconds: 300),
+        child: AlertDialog(
+          title: Text(
+            'Request Fine Payment',
+            style: GoogleFonts.poppins(color: AppColors.primary),
+          ),
+          content: Text(
+            'You have a fine of \$${totalFine.toStringAsFixed(2)}. Request admin approval to pay this fine?',
+            style: GoogleFonts.poppins(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel', style: GoogleFonts.poppins(color: AppColors.error)),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context); // Close the confirmation dialog
+                final transactionProvider = Provider.of<TransactionProvider>(context, listen: false);
+                final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                try {
+                  setState(() {
+                    _isLoading = true;
+                  });
+                  await transactionProvider.requestFinePayment(authProvider.token!);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Fine payment request submitted! Awaiting admin approval.'),
+                      backgroundColor: AppColors.accent,
+                    ),
+                  );
+                } catch (e) {
+                  if (e.toString().contains('Invalid token')) {
+                    await authProvider.logout();
+                    Navigator.pushReplacementNamed(context, '/login');
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error requesting payment: $e'),
+                        backgroundColor: AppColors.error,
+                      ),
+                    );
+                  }
+                } finally {
+                  setState(() {
+                    _isLoading = false;
+                  });
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+              child: Text('Request', style: GoogleFonts.poppins()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bookProvider = Provider.of<BookProvider>(context);
     final transactionProvider = Provider.of<TransactionProvider>(context);
     final authProvider = Provider.of<AuthProvider>(context);
+
+    // Check for pending payment requests
+    final hasPendingRequest = transactionProvider.transactions.any(
+      (t) => !t.finePaid && t.fine > 0 && t.paymentStatus == 'pending',
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -150,7 +217,7 @@ class _ReaderDashboardState extends State<ReaderDashboard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Fine Notification Banner
-                if (transactionProvider.totalFine > 0)
+                if (transactionProvider.totalFine > 0 || hasPendingRequest)
                   Container(
                     padding: EdgeInsets.all(10),
                     margin: EdgeInsets.only(bottom: 20),
@@ -165,10 +232,20 @@ class _ReaderDashboardState extends State<ReaderDashboard> {
                         SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            'You have an overdue fine of \$${transactionProvider.totalFine.toStringAsFixed(2)}. Please return your books to avoid additional charges.',
+                            hasPendingRequest
+                                ? 'Your fine payment request is pending admin approval.'
+                                : 'You have an overdue fine of \$${transactionProvider.totalFine.toStringAsFixed(2)}. Request admin approval to pay.',
                             style: GoogleFonts.poppins(color: AppColors.error, fontSize: 14),
                           ),
                         ),
+                        if (!hasPendingRequest)
+                          ElevatedButton(
+                            onPressed: () {
+                              _showPaymentRequestDialog(transactionProvider.totalFine);
+                            },
+                            style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+                            child: Text('Request Payment', style: GoogleFonts.poppins()),
+                          ),
                       ],
                     ),
                   ),
@@ -364,7 +441,7 @@ class _ReaderDashboardState extends State<ReaderDashboard> {
                                       child: ListTile(
                                         title: Text(book.title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
                                         subtitle: Text(
-                                          'Author: ${book.author} | Borrowed on: ${transaction.borrowDate} | Due: ${transaction.dueDate ?? 'N/A'} | Fine: \$${transaction.fine.toStringAsFixed(2)}',
+                                          'Author: ${book.author} | Borrowed on: ${transaction.borrowDate} | Due: ${transaction.dueDate ?? 'N/A'} | Fine: \$${transaction.fine.toStringAsFixed(2)}${transaction.finePaid ? ' (Paid)' : transaction.paymentStatus != null ? ' (${transaction.paymentStatus})' : ''}',
                                           style: GoogleFonts.poppins(),
                                         ),
                                         trailing: ElevatedButton(

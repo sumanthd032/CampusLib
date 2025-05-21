@@ -11,10 +11,8 @@ app = Flask(__name__)
 app.config['JWT_SECRET_KEY'] = '0afce35125fb4100282bae99fcd6c8eb'
 jwt = JWTManager(app)
 
-# Enable CORS for all routes, allowing requests from the Flutter app
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -25,25 +23,24 @@ db_config = {
     'database': 'campuslib'
 }
 
-# Fine calculation settings
-FINE_PER_DAY = 1.0  # $1 per day for overdue books
-BORROW_PERIOD_DAYS = 14  # Books are due after 14 days
+FINE_PER_DAY = 1.0
+BORROW_PERIOD_DAYS = 14
 
-def calculate_fine(borrow_date, due_date, return_date, status):
-    """Calculate fine for a transaction."""
+def calculate_fine(borrow_date, due_date, return_date, status, fine_paid):
+    if fine_paid:
+        return 0.0
+
     today = datetime.now()
     due_date = datetime.strptime(due_date, '%Y-%m-%d %H:%M:%S') if isinstance(due_date, str) else due_date
 
-    # If the book is returned, calculate fine based on return date
     if status == 'returned' and return_date:
         return_date = datetime.strptime(return_date, '%Y-%m-%d %H:%M:%S') if isinstance(return_date, str) else return_date
         if return_date <= due_date:
-            return 0.0  # No fine if returned on or before due date
+            return 0.0
         overdue_days = (return_date - due_date).days
     else:
-        # If not returned, calculate fine based on current date
         if today <= due_date:
-            return 0.0  # No fine if not yet overdue
+            return 0.0
         overdue_days = (today - due_date).days
 
     fine = overdue_days * FINE_PER_DAY
@@ -375,7 +372,7 @@ def confirm_return():
             return jsonify({"status": "error", "message": "Book not found"}), 404
 
         return_date = datetime.now()
-        fine = calculate_fine(transaction['borrow_date'], transaction['due_date'], return_date, 'returned')
+        fine = calculate_fine(transaction['borrow_date'], transaction['due_date'], return_date, 'returned', transaction['fine_paid'])
 
         cursor.execute(
             "UPDATE books SET available_copies = available_copies + 1 WHERE book_id = %s",
@@ -412,21 +409,22 @@ def get_transactions():
         cursor.execute("SELECT * FROM borrow_transactions")
         transactions = cursor.fetchall()
 
-        # Calculate fines for each transaction
         for transaction in transactions:
             fine = calculate_fine(
                 transaction['borrow_date'],
                 transaction['due_date'],
                 transaction['return_date'],
-                transaction['status']
+                transaction['status'],
+                transaction['fine_paid']
             )
-            # Update the fine in the database if it has changed
             if fine != float(transaction['fine']):
                 cursor.execute(
                     "UPDATE borrow_transactions SET fine = %s WHERE id = %s",
                     (fine, transaction['id'])
                 )
             transaction['fine'] = fine
+            transaction['fine_paid'] = bool(transaction['fine_paid'])
+            transaction['payment_status'] = transaction['payment_status'] if transaction['payment_status'] else None
 
         connection.commit()
         logger.info(f"Fetched {len(transactions)} transactions for admin {identity}")
@@ -455,29 +453,142 @@ def get_user_transactions():
         cursor.execute("SELECT * FROM borrow_transactions WHERE user_id = %s", (identity,))
         transactions = cursor.fetchall()
 
-        # Calculate fines for each transaction
         total_fine = 0.0
         for transaction in transactions:
             fine = calculate_fine(
                 transaction['borrow_date'],
                 transaction['due_date'],
                 transaction['return_date'],
-                transaction['status']
+                transaction['status'],
+                transaction['fine_paid']
             )
-            # Update the fine in the database if it has changed
             if fine != float(transaction['fine']):
                 cursor.execute(
                     "UPDATE borrow_transactions SET fine = %s WHERE id = %s",
                     (fine, transaction['id'])
                 )
             transaction['fine'] = fine
-            total_fine += fine
+            if not transaction['fine_paid'] and transaction['payment_status'] != 'pending':
+                total_fine += fine
+            transaction['fine_paid'] = bool(transaction['fine_paid'])
+            transaction['payment_status'] = transaction['payment_status'] if transaction['payment_status'] else None
 
         connection.commit()
         logger.info(f"Fetched {len(transactions)} transactions for user {identity}, Total Fine: ${total_fine}")
         return jsonify({"status": "success", "transactions": transactions, "total_fine": total_fine}), 200
     except Error as e:
         logger.error(f"Database error fetching user transactions: {e}")
+        return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+@app.route('/api/request-fine-payment', methods=['POST'])
+@jwt_required()
+def request_fine_payment():
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if claims['user_type'] != 'reader':
+        logger.warning(f"Request fine payment failed: Reader access required for user {identity}")
+        return jsonify({"status": "error", "message": "Reader access required"}), 403
+
+    try:
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT * FROM borrow_transactions WHERE user_id = %s AND fine > 0 AND fine_paid = FALSE AND (payment_status IS NULL OR payment_status != 'pending')",
+            (identity,)
+        )
+        transactions = cursor.fetchall()
+
+        if not transactions:
+            logger.info(f"No unpaid fines to request payment for user {identity}")
+            return jsonify({"status": "success", "message": "No unpaid fines to request payment for"}), 200
+
+        total_fine = 0.0
+        for transaction in transactions:
+            fine = calculate_fine(
+                transaction['borrow_date'],
+                transaction['due_date'],
+                transaction['return_date'],
+                transaction['status'],
+                transaction['fine_paid']
+            )
+            total_fine += fine
+
+        if total_fine <= 0:
+            logger.info(f"No unpaid fines after recalculation for user {identity}")
+            return jsonify({"status": "success", "message": "No unpaid fines to request payment for"}), 200
+
+        cursor.execute(
+            "UPDATE borrow_transactions SET payment_status = 'pending' WHERE user_id = %s AND fine > 0 AND fine_paid = FALSE AND (payment_status IS NULL OR payment_status != 'pending')",
+            (identity,)
+        )
+        connection.commit()
+
+        logger.info(f"User {identity} requested fine payment: Total ${total_fine}")
+        return jsonify({"status": "success", "message": f"Fine payment request for ${total_fine} submitted. Awaiting admin approval."}), 200
+    except Error as e:
+        logger.error(f"Database error during fine payment request: {e}")
+        return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+@app.route('/api/admin/pay-fine', methods=['POST'])
+@jwt_required()
+def admin_pay_fine():
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if claims['user_type'] != 'admin':
+        logger.warning(f"Admin pay fine failed: Admin access required for user {identity}")
+        return jsonify({"status": "error", "message": "Admin access required"}), 403
+
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        approve = data.get('approve', True)
+
+        if not user_id:
+            logger.warning("Admin pay fine failed: Missing user_id")
+            return jsonify({"status": "error", "message": "Missing user_id"}), 400
+
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT * FROM borrow_transactions WHERE user_id = %s AND fine > 0 AND fine_paid = FALSE AND payment_status = 'pending'",
+            (user_id,)
+        )
+        transactions = cursor.fetchall()
+
+        if not transactions:
+            logger.warning(f"No pending fine payment requests for user {user_id}")
+            return jsonify({"status": "error", "message": "No pending fine payment requests"}), 404
+
+        total_fine = sum(transaction['fine'] for transaction in transactions)
+
+        new_status = 'approved' if approve else 'rejected'
+        if approve:
+            cursor.execute(
+                "UPDATE borrow_transactions SET fine_paid = TRUE, payment_status = %s WHERE user_id = %s AND fine > 0 AND fine_paid = FALSE AND payment_status = 'pending'",
+                (new_status, user_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE borrow_transactions SET payment_status = %s WHERE user_id = %s AND fine > 0 AND fine_paid = FALSE AND payment_status = 'pending'",
+                (new_status, user_id)
+            )
+
+        connection.commit()
+        action = "approved" if approve else "rejected"
+        logger.info(f"Admin {identity} {action} fine payment for user {user_id}: Total ${total_fine}")
+        return jsonify({"status": "success", "message": f"Fine payment {action} for ${total_fine}"}), 200
+    except Error as e:
+        logger.error(f"Database error during admin fine payment: {e}")
         return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     finally:
         if 'connection' in locals() and connection.is_connected():
