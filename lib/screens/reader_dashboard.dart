@@ -23,7 +23,6 @@ class _ReaderDashboardState extends State<ReaderDashboard> {
   @override
   void initState() {
     super.initState();
-    // Delay initialization until after the first frame to avoid setState during build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeData();
     });
@@ -146,27 +145,80 @@ class _ReaderDashboardState extends State<ReaderDashboard> {
         padding: EdgeInsets.all(20),
         child: FadeIn(
           duration: Duration(milliseconds: 500),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Browse Books',
-                style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primary),
-              ),
-              SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        labelText: 'Search by Title or Author',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.search, color: AppColors.accent),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Fine Notification Banner
+                if (transactionProvider.totalFine > 0)
+                  Container(
+                    padding: EdgeInsets.all(10),
+                    margin: EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                      color: AppColors.error.withOpacity(0.1),
+                      border: Border.all(color: AppColors.error),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.warning, color: AppColors.error),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'You have an overdue fine of \$${transactionProvider.totalFine.toStringAsFixed(2)}. Please return your books to avoid additional charges.',
+                            style: GoogleFonts.poppins(color: AppColors.error, fontSize: 14),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                Text(
+                  'Browse Books',
+                  style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primary),
+                ),
+                SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          labelText: 'Search by Title or Author',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.search, color: AppColors.accent),
+                        ),
+                        onChanged: (value) async {
+                          try {
+                            await bookProvider.fetchBooks(authProvider.token!, query: value, category: _selectedCategory ?? '');
+                          } catch (e) {
+                            if (e.toString().contains('Invalid token')) {
+                              await authProvider.logout();
+                              Navigator.pushReplacementNamed(context, '/login');
+                            }
+                          }
+                        },
                       ),
+                    ),
+                    SizedBox(width: 10),
+                    DropdownButton<String>(
+                      hint: Text('Filter by Category', style: GoogleFonts.poppins()),
+                      value: _selectedCategory,
+                      items: [
+                        DropdownMenuItem(
+                          value: '',
+                          child: Text('All Categories', style: GoogleFonts.poppins()),
+                        ),
+                        ...bookProvider.categories.map((category) => DropdownMenuItem(
+                              value: category,
+                              child: Text(category, style: GoogleFonts.poppins()),
+                            )),
+                      ],
                       onChanged: (value) async {
+                        setState(() {
+                          _selectedCategory = value;
+                        });
                         try {
-                          await bookProvider.fetchBooks(authProvider.token!, query: value, category: _selectedCategory ?? '');
+                          await bookProvider.fetchBooks(authProvider.token!, query: _searchController.text, category: value ?? '');
                         } catch (e) {
                           if (e.toString().contains('Invalid token')) {
                             await authProvider.logout();
@@ -175,191 +227,165 @@ class _ReaderDashboardState extends State<ReaderDashboard> {
                         }
                       },
                     ),
-                  ),
-                  SizedBox(width: 10),
-                  DropdownButton<String>(
-                    hint: Text('Filter by Category', style: GoogleFonts.poppins()),
-                    value: _selectedCategory,
-                    items: [
-                      DropdownMenuItem(
-                        value: '',
-                        child: Text('All Categories', style: GoogleFonts.poppins()),
-                      ),
-                      ...bookProvider.categories.map((category) => DropdownMenuItem(
-                            value: category,
-                            child: Text(category, style: GoogleFonts.poppins()),
-                          )),
-                    ],
-                    onChanged: (value) async {
-                      setState(() {
-                        _selectedCategory = value;
-                      });
-                      try {
-                        await bookProvider.fetchBooks(authProvider.token!, query: _searchController.text, category: value ?? '');
-                      } catch (e) {
-                        if (e.toString().contains('Invalid token')) {
-                          await authProvider.logout();
-                          Navigator.pushReplacementNamed(context, '/login');
-                        }
-                      }
-                    },
-                  ),
-                ],
-              ),
-              SizedBox(height: 20),
-              Expanded(
-                child: _isLoading
-                    ? Center(child: CircularProgressIndicator(color: AppColors.accent))
-                    : bookProvider.errorMessage != null
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Error: ${bookProvider.errorMessage}',
-                                  style: GoogleFonts.poppins(color: AppColors.error),
-                                  textAlign: TextAlign.center,
-                                ),
-                                SizedBox(height: 10),
-                                ElevatedButton(
-                                  onPressed: _initializeData,
-                                  child: Text('Retry', style: GoogleFonts.poppins()),
-                                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
-                                ),
-                              ],
-                            ),
-                          )
-                        : bookProvider.books.isEmpty
-                            ? Center(child: Text('No books found', style: GoogleFonts.poppins()))
-                            : ListView.builder(
-                                itemCount: bookProvider.books.length,
-                                itemBuilder: (context, index) {
-                                  final book = bookProvider.books[index];
-                                  return Card(
-                                    elevation: 5,
-                                    margin: EdgeInsets.symmetric(vertical: 10),
-                                    child: ListTile(
-                                      title: Text(book.title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                                      subtitle: Text(
-                                        'Author: ${book.author} | Category: ${book.category} | Available: ${book.availableCopies}/${book.totalCopies}',
-                                        style: GoogleFonts.poppins(),
-                                      ),
-                                      trailing: book.availableCopies > 0
-                                          ? ElevatedButton(
-                                              onPressed: () async {
-                                                setState(() {
-                                                  _isLoading = true;
-                                                });
-                                                try {
-                                                  final qrData = await bookProvider.requestBorrow(
-                                                    book.bookId,
-                                                    authProvider.token!,
-                                                  );
-                                                  _showQrCodeDialog(qrData);
-                                                } catch (e) {
-                                                  if (e.toString().contains('Invalid token')) {
-                                                    await authProvider.logout();
-                                                    Navigator.pushReplacementNamed(context, '/login');
-                                                  } else {
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      SnackBar(
-                                                        content: Text('Error: $e'),
-                                                        backgroundColor: AppColors.error,
-                                                      ),
-                                                    );
-                                                  }
-                                                } finally {
+                  ],
+                ),
+                SizedBox(height: 20),
+                SizedBox(
+                  height: 300,
+                  child: _isLoading
+                      ? Center(child: CircularProgressIndicator(color: AppColors.accent))
+                      : bookProvider.errorMessage != null
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Error: ${bookProvider.errorMessage}',
+                                    style: GoogleFonts.poppins(color: AppColors.error),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  SizedBox(height: 10),
+                                  ElevatedButton(
+                                    onPressed: _initializeData,
+                                    child: Text('Retry', style: GoogleFonts.poppins()),
+                                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : bookProvider.books.isEmpty
+                              ? Center(child: Text('No books found', style: GoogleFonts.poppins()))
+                              : ListView.builder(
+                                  itemCount: bookProvider.books.length,
+                                  itemBuilder: (context, index) {
+                                    final book = bookProvider.books[index];
+                                    return Card(
+                                      elevation: 5,
+                                      margin: EdgeInsets.symmetric(vertical: 10),
+                                      child: ListTile(
+                                        title: Text(book.title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                                        subtitle: Text(
+                                          'Author: ${book.author} | Category: ${book.category} | Available: ${book.availableCopies}/${book.totalCopies}',
+                                          style: GoogleFonts.poppins(),
+                                        ),
+                                        trailing: book.availableCopies > 0
+                                            ? ElevatedButton(
+                                                onPressed: () async {
                                                   setState(() {
-                                                    _isLoading = false;
+                                                    _isLoading = true;
                                                   });
-                                                }
-                                              },
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: AppColors.accent,
-                                              ),
-                                              child: Text('Borrow', style: GoogleFonts.poppins()),
-                                            )
-                                          : Text('Not Available', style: GoogleFonts.poppins(color: AppColors.error)),
-                                    ),
-                                  );
-                                },
-                              ),
-              ),
-              SizedBox(height: 20),
-              Text(
-                'My Borrowed Books',
-                style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primary),
-              ),
-              SizedBox(height: 20),
-              Expanded(
-                child: transactionProvider.isLoading
-                    ? Center(child: CircularProgressIndicator(color: AppColors.accent))
-                    : transactionProvider.errorMessage != null
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Error: ${transactionProvider.errorMessage}',
-                                  style: GoogleFonts.poppins(color: AppColors.error),
-                                  textAlign: TextAlign.center,
-                                ),
-                                SizedBox(height: 10),
-                                ElevatedButton(
-                                  onPressed: _initializeData,
-                                  child: Text('Retry', style: GoogleFonts.poppins()),
-                                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
-                                ),
-                              ],
-                            ),
-                          )
-                        : transactionProvider.transactions.where((t) => t.status == 'borrowed').isEmpty
-                            ? Center(child: Text('No borrowed books', style: GoogleFonts.poppins()))
-                            : ListView.builder(
-                                itemCount: transactionProvider.transactions.where((t) => t.status == 'borrowed').length,
-                                itemBuilder: (context, index) {
-                                  final transaction = transactionProvider.transactions
-                                      .where((t) => t.status == 'borrowed')
-                                      .elementAt(index);
-                                  final book = bookProvider.books.firstWhere(
-                                    (b) => b.bookId == transaction.bookId,
-                                    orElse: () => Book(
-                                      bookId: 0,
-                                      title: 'Unknown',
-                                      author: 'Unknown',
-                                      isbn: '',
-                                      category: '',
-                                      totalCopies: 0,
-                                      availableCopies: 0,
-                                    ),
-                                  );
-                                  return Card(
-                                    elevation: 5,
-                                    margin: EdgeInsets.symmetric(vertical: 10),
-                                    child: ListTile(
-                                      title: Text(book.title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                                      subtitle: Text(
-                                        'Author: ${book.author} | Borrowed on: ${transaction.borrowDate}',
-                                        style: GoogleFonts.poppins(),
+                                                  try {
+                                                    final qrData = await bookProvider.requestBorrow(
+                                                      book.bookId,
+                                                      authProvider.token!,
+                                                    );
+                                                    _showQrCodeDialog(qrData);
+                                                  } catch (e) {
+                                                    if (e.toString().contains('Invalid token')) {
+                                                      await authProvider.logout();
+                                                      Navigator.pushReplacementNamed(context, '/login');
+                                                    } else {
+                                                      ScaffoldMessenger.of(context).showSnackBar(
+                                                        SnackBar(
+                                                          content: Text('Error: $e'),
+                                                          backgroundColor: AppColors.error,
+                                                        ),
+                                                      );
+                                                    }
+                                                  } finally {
+                                                    setState(() {
+                                                      _isLoading = false;
+                                                    });
+                                                  }
+                                                },
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: AppColors.accent,
+                                                ),
+                                                child: Text('Borrow', style: GoogleFonts.poppins()),
+                                              )
+                                            : Text('Not Available', style: GoogleFonts.poppins(color: AppColors.error)),
                                       ),
-                                      trailing: ElevatedButton(
-                                        onPressed: () {
-                                          final qrData = {
-                                            'user_id': transaction.userId,
-                                            'book_id': transaction.bookId,
-                                            'action': 'return',
-                                          };
-                                          _showQrCodeDialog(qrData);
-                                        },
-                                        style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
-                                        child: Text('Return', style: GoogleFonts.poppins()),
-                                      ),
-                                    ),
-                                  );
-                                },
+                                    );
+                                  },
+                                ),
+                ),
+                SizedBox(height: 20),
+                Text(
+                  'My Borrowed Books',
+                  style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.primary),
+                ),
+                SizedBox(height: 20),
+                SizedBox(
+                  height: 300,
+                  child: transactionProvider.isLoading
+                      ? Center(child: CircularProgressIndicator(color: AppColors.accent))
+                      : transactionProvider.errorMessage != null
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Error: ${transactionProvider.errorMessage}',
+                                    style: GoogleFonts.poppins(color: AppColors.error),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  SizedBox(height: 10),
+                                  ElevatedButton(
+                                    onPressed: _initializeData,
+                                    child: Text('Retry', style: GoogleFonts.poppins()),
+                                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+                                  ),
+                                ],
                               ),
-              ),
-            ],
+                            )
+                          : transactionProvider.transactions.where((t) => t.status == 'borrowed').isEmpty
+                              ? Center(child: Text('No borrowed books', style: GoogleFonts.poppins()))
+                              : ListView.builder(
+                                  itemCount: transactionProvider.transactions.where((t) => t.status == 'borrowed').length,
+                                  itemBuilder: (context, index) {
+                                    final transaction = transactionProvider.transactions
+                                        .where((t) => t.status == 'borrowed')
+                                        .elementAt(index);
+                                    final book = bookProvider.books.firstWhere(
+                                      (b) => b.bookId == transaction.bookId,
+                                      orElse: () => Book(
+                                        bookId: 0,
+                                        title: 'Unknown',
+                                        author: 'Unknown',
+                                        isbn: '',
+                                        category: '',
+                                        totalCopies: 0,
+                                        availableCopies: 0,
+                                      ),
+                                    );
+                                    return Card(
+                                      elevation: 5,
+                                      margin: EdgeInsets.symmetric(vertical: 10),
+                                      child: ListTile(
+                                        title: Text(book.title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                                        subtitle: Text(
+                                          'Author: ${book.author} | Borrowed on: ${transaction.borrowDate} | Due: ${transaction.dueDate ?? 'N/A'} | Fine: \$${transaction.fine.toStringAsFixed(2)}',
+                                          style: GoogleFonts.poppins(),
+                                        ),
+                                        trailing: ElevatedButton(
+                                          onPressed: () {
+                                            final qrData = {
+                                              'user_id': transaction.userId,
+                                              'book_id': transaction.bookId,
+                                              'action': 'return',
+                                            };
+                                            _showQrCodeDialog(qrData);
+                                          },
+                                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+                                          child: Text('Return', style: GoogleFonts.poppins()),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

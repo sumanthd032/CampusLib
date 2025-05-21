@@ -7,10 +7,12 @@ class TransactionProvider with ChangeNotifier {
   List<Transaction> _transactions = [];
   bool _isLoading = false;
   String? _errorMessage;
+  double _totalFine = 0.0;
 
   List<Transaction> get transactions => _transactions;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  double get totalFine => _totalFine;
 
   Future<void> fetchTransactions(String token) async {
     _isLoading = true;
@@ -21,7 +23,7 @@ class TransactionProvider with ChangeNotifier {
       final response = await http.get(
         Uri.parse('http://localhost:5000/api/transactions'),
         headers: {
-          'Authorization': 'Bearer $token',
+          'Authorization': 'BearerAnywhere $token',
           'Content-Type': 'application/json',
         },
       );
@@ -50,6 +52,7 @@ class TransactionProvider with ChangeNotifier {
   Future<void> fetchUserTransactions(String token) async {
     _isLoading = true;
     _errorMessage = null;
+    _totalFine = 0.0;
     notifyListeners();
 
     try {
@@ -66,6 +69,7 @@ class TransactionProvider with ChangeNotifier {
         _transactions = (data['transactions'] as List)
             .map((t) => Transaction.fromJson(t))
             .toList();
+        _totalFine = (data['total_fine'] as num?)?.toDouble() ?? 0.0;
       } else if (response.statusCode == 422) {
         _errorMessage = 'Session expired. Please log in again.';
         throw Exception('Invalid token');

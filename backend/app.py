@@ -4,7 +4,7 @@ from flask_cors import CORS
 import mysql.connector
 from mysql.connector import Error
 import bcrypt
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 app = Flask(__name__)
@@ -24,6 +24,30 @@ db_config = {
     'password': 'Jaiho@123',
     'database': 'campuslib'
 }
+
+# Fine calculation settings
+FINE_PER_DAY = 1.0  # $1 per day for overdue books
+BORROW_PERIOD_DAYS = 14  # Books are due after 14 days
+
+def calculate_fine(borrow_date, due_date, return_date, status):
+    """Calculate fine for a transaction."""
+    today = datetime.now()
+    due_date = datetime.strptime(due_date, '%Y-%m-%d %H:%M:%S') if isinstance(due_date, str) else due_date
+
+    # If the book is returned, calculate fine based on return date
+    if status == 'returned' and return_date:
+        return_date = datetime.strptime(return_date, '%Y-%m-%d %H:%M:%S') if isinstance(return_date, str) else return_date
+        if return_date <= due_date:
+            return 0.0  # No fine if returned on or before due date
+        overdue_days = (return_date - due_date).days
+    else:
+        # If not returned, calculate fine based on current date
+        if today <= due_date:
+            return 0.0  # No fine if not yet overdue
+        overdue_days = (today - due_date).days
+
+    fine = overdue_days * FINE_PER_DAY
+    return round(fine, 2)
 
 @app.route('/api/register', methods=['POST'])
 def register():
@@ -76,7 +100,6 @@ def login():
         user = cursor.fetchone()
 
         if user and bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
-            # Convert user_id to string for JWT subject
             access_token = create_access_token(identity=str(user['user_id']), additional_claims={"user_type": user['user_type']})
             logger.info(f"User logged in: {identifier}, Type: {user['user_type']}")
             return jsonify({"status": "success", "token": access_token, "user_type": user['user_type']}), 200
@@ -286,16 +309,19 @@ def confirm_borrow():
             logger.warning(f"Borrow confirm failed: User {user_id} not found")
             return jsonify({"status": "error", "message": "User not found"}), 404
 
+        borrow_date = datetime.now()
+        due_date = borrow_date + timedelta(days=BORROW_PERIOD_DAYS)
+
         cursor.execute(
             "UPDATE books SET available_copies = available_copies - 1 WHERE book_id = %s",
             (book_id,)
         )
         cursor.execute(
-            "INSERT INTO borrow_transactions (user_id, book_id, borrow_date, status) VALUES (%s, %s, %s, %s)",
-            (user_id, book_id, datetime.now(), 'borrowed')
+            "INSERT INTO borrow_transactions (user_id, book_id, borrow_date, due_date, status) VALUES (%s, %s, %s, %s, %s)",
+            (user_id, book_id, borrow_date, due_date, 'borrowed')
         )
         connection.commit()
-        logger.info(f"Borrow confirmed: User {user_id}, Book {book_id}")
+        logger.info(f"Borrow confirmed: User {user_id}, Book {book_id}, Due Date: {due_date}")
         return jsonify({"status": "success", "message": "Borrow confirmed"}), 200
     except Error as e:
         logger.error(f"Database error confirming borrow: {e}")
@@ -348,17 +374,20 @@ def confirm_return():
             logger.warning(f"Return confirm failed: Book {book_id} not found")
             return jsonify({"status": "error", "message": "Book not found"}), 404
 
+        return_date = datetime.now()
+        fine = calculate_fine(transaction['borrow_date'], transaction['due_date'], return_date, 'returned')
+
         cursor.execute(
             "UPDATE books SET available_copies = available_copies + 1 WHERE book_id = %s",
             (book_id,)
         )
         cursor.execute(
-            "UPDATE borrow_transactions SET status = 'returned', return_date = %s WHERE id = %s",
-            (datetime.now(), transaction['id'])
+            "UPDATE borrow_transactions SET status = 'returned', return_date = %s, fine = %s WHERE id = %s",
+            (return_date, fine, transaction['id'])
         )
         connection.commit()
-        logger.info(f"Return confirmed: User {user_id}, Book {book_id}")
-        return jsonify({"status": "success", "message": "Return confirmed"}), 200
+        logger.info(f"Return confirmed: User {user_id}, Book {book_id}, Fine: ${fine}")
+        return jsonify({"status": "success", "message": "Return confirmed", "fine": fine}), 200
     except Error as e:
         logger.error(f"Database error confirming return: {e}")
         return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
@@ -382,6 +411,24 @@ def get_transactions():
 
         cursor.execute("SELECT * FROM borrow_transactions")
         transactions = cursor.fetchall()
+
+        # Calculate fines for each transaction
+        for transaction in transactions:
+            fine = calculate_fine(
+                transaction['borrow_date'],
+                transaction['due_date'],
+                transaction['return_date'],
+                transaction['status']
+            )
+            # Update the fine in the database if it has changed
+            if fine != float(transaction['fine']):
+                cursor.execute(
+                    "UPDATE borrow_transactions SET fine = %s WHERE id = %s",
+                    (fine, transaction['id'])
+                )
+            transaction['fine'] = fine
+
+        connection.commit()
         logger.info(f"Fetched {len(transactions)} transactions for admin {identity}")
         return jsonify({"status": "success", "transactions": transactions}), 200
     except Error as e:
@@ -407,8 +454,28 @@ def get_user_transactions():
 
         cursor.execute("SELECT * FROM borrow_transactions WHERE user_id = %s", (identity,))
         transactions = cursor.fetchall()
-        logger.info(f"Fetched {len(transactions)} transactions for user {identity}")
-        return jsonify({"status": "success", "transactions": transactions}), 200
+
+        # Calculate fines for each transaction
+        total_fine = 0.0
+        for transaction in transactions:
+            fine = calculate_fine(
+                transaction['borrow_date'],
+                transaction['due_date'],
+                transaction['return_date'],
+                transaction['status']
+            )
+            # Update the fine in the database if it has changed
+            if fine != float(transaction['fine']):
+                cursor.execute(
+                    "UPDATE borrow_transactions SET fine = %s WHERE id = %s",
+                    (fine, transaction['id'])
+                )
+            transaction['fine'] = fine
+            total_fine += fine
+
+        connection.commit()
+        logger.info(f"Fetched {len(transactions)} transactions for user {identity}, Total Fine: ${total_fine}")
+        return jsonify({"status": "success", "transactions": transactions, "total_fine": total_fine}), 200
     except Error as e:
         logger.error(f"Database error fetching user transactions: {e}")
         return jsonify({"status": "error", "message": f"Database error: {e}"}), 500

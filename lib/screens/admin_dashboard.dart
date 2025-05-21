@@ -544,7 +544,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                         style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
                                       ),
                                       subtitle: Text(
-                                        'User ID: ${transaction.userId} | Book ID: ${transaction.bookId} | Date: ${transaction.borrowDate} | Status: ${transaction.status}${transaction.returnDate != null ? ' | Returned on: ${transaction.returnDate}' : ''}',
+                                        'User ID: ${transaction.userId} | Book ID: ${transaction.bookId} | Date: ${transaction.borrowDate} | Due: ${transaction.dueDate ?? 'N/A'} | Status: ${transaction.status}${transaction.returnDate != null ? ' | Returned on: ${transaction.returnDate}' : ''} | Fine: \$${transaction.fine.toStringAsFixed(2)}',
                                         style: GoogleFonts.poppins(),
                                       ),
                                     ),
