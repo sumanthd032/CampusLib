@@ -6,6 +6,10 @@ from mysql.connector import Error
 import bcrypt
 from datetime import datetime, timedelta
 import logging
+import random
+import string
+import csv
+from io import StringIO
 
 app = Flask(__name__)
 app.config['JWT_SECRET_KEY'] = '0afce35125fb4100282bae99fcd6c8eb'
@@ -25,6 +29,11 @@ db_config = {
 
 FINE_PER_DAY = 1.0
 BORROW_PERIOD_DAYS = 14
+
+def generate_library_card_number():
+    date_part = datetime.now().strftime('%Y%m%d')
+    random_part = ''.join(random.choices(string.digits, k=4))
+    return f"LIB-{date_part}-{random_part}"
 
 def calculate_fine(borrow_date, due_date, return_date, status, fine_paid):
     if fine_paid:
@@ -74,6 +83,180 @@ def register():
         return jsonify({"status": "success", "message": "User registered successfully"}), 201
     except Error as e:
         logger.error(f"Database error during registration: {e}")
+        return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+@app.route('/api/admin/create-reader', methods=['POST'])
+@jwt_required()
+def create_reader():
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if claims['user_type'] != 'admin':
+        logger.warning(f"Create reader failed: Admin access required for user {identity}")
+        return jsonify({"status": "error", "message": "Admin access required"}), 403
+
+    try:
+        data = request.get_json()
+        name = data.get('name')
+        email = data.get('email')
+        password = data.get('password', 'default123')
+
+        if not all([name, email]):
+            logger.warning("Create reader failed: Missing required fields")
+            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+
+        library_card_no = generate_library_card_number()
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor()
+
+        cursor.execute("SELECT * FROM users WHERE email = %s OR library_card_no = %s", (email, library_card_no))
+        if cursor.fetchone():
+            logger.warning(f"Create reader failed: Email {email} or library card {library_card_no} already exists")
+            return jsonify({"status": "error", "message": "Email or library card number already exists"}), 400
+
+        cursor.execute(
+            "INSERT INTO users (name, email, library_card_no, password, user_type) VALUES (%s, %s, %s, %s, %s)",
+            (name, email, library_card_no, hashed_password, 'reader')
+        )
+        connection.commit()
+        logger.info(f"Reader created: {email}, Library Card: {library_card_no}")
+        return jsonify({
+            "status": "success",
+            "message": "Reader created successfully",
+            "library_card_no": library_card_no
+        }), 201
+    except Error as e:
+        logger.error(f"Database error during reader creation: {e}")
+        return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+@app.route('/api/admin/user-transactions', methods=['GET'])
+@jwt_required()
+def get_user_transactions_by_library_card():
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if claims['user_type'] != 'admin':
+        logger.warning(f"Fetch user transactions failed: Admin access required for user {identity}")
+        return jsonify({"status": "error", "message": "Admin access required"}), 403
+
+    try:
+        library_card_no = request.args.get('library_card_no')
+        if not library_card_no:
+            logger.warning("Fetch user transactions failed: Library card number required")
+            return jsonify({"status": "error", "message": "Library card number required"}), 400
+
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute("SELECT * FROM users WHERE library_card_no = %s", (library_card_no,))
+        user = cursor.fetchone()
+        if not user:
+            logger.warning(f"User not found with library card: {library_card_no}")
+            return jsonify({"status": "error", "message": "User not found"}), 404
+
+        cursor.execute("SELECT * FROM borrow_transactions WHERE user_id = %s", (user['user_id'],))
+        transactions = cursor.fetchall()
+
+        total_fine = 0.0
+        for transaction in transactions:
+            fine = calculate_fine(
+                transaction['borrow_date'],
+                transaction['due_date'],
+                transaction['return_date'],
+                transaction['status'],
+                transaction['fine_paid']
+            )
+            if fine != float(transaction['fine']):
+                cursor.execute(
+                    "UPDATE borrow_transactions SET fine = %s WHERE id = %s",
+                    (fine, transaction['id'])
+                )
+            transaction['fine'] = fine
+            if not transaction['fine_paid'] and transaction['payment_status'] != 'pending':
+                total_fine += fine
+            transaction['fine_paid'] = bool(transaction['fine_paid'])
+            transaction['payment_status'] = transaction['payment_status'] if transaction['payment_status'] else None
+
+        connection.commit()
+        logger.info(f"Fetched {len(transactions)} transactions for library card {library_card_no}, Total Fine: ${total_fine}")
+        return jsonify({
+            "status": "success",
+            "user": {
+                "user_id": user['user_id'],
+                "name": user['name'],
+                "email": user['email'],
+                "library_card_no": user['library_card_no']
+            },
+            "transactions": transactions,
+            "total_fine": total_fine
+        }), 200
+    except Error as e:
+        logger.error(f"Database error fetching user transactions: {e}")
+        return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+@app.route('/api/admin/import-books', methods=['POST'])
+@jwt_required()
+def import_books():
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if claims['user_type'] != 'admin':
+        logger.warning(f"Import books failed: Admin access required for user {identity}")
+        return jsonify({"status": "error", "message": "Admin access required"}), 403
+
+    try:
+        if 'file' not in request.files:
+            logger.warning("Import books failed: No file uploaded")
+            return jsonify({"status": "error", "message": "No file uploaded"}), 400
+
+        file = request.files['file']
+        if not file.filename.endswith('.csv'):
+            logger.warning("Import books failed: File must be a CSV")
+            return jsonify({"status": "error", "message": "File must be a CSV"}), 400
+
+        # Read the CSV file
+        content = file.read().decode('utf-8')
+        csv_reader = csv.DictReader(StringIO(content))
+        required_headers = ['title', 'author', 'isbn', 'category', 'total_copies']
+
+        # Validate headers
+        if not all(header in csv_reader.fieldnames for header in required_headers):
+            missing = [header for header in required_headers if header not in csv_reader.fieldnames]
+            logger.warning(f"Import books failed: Missing CSV headers: {missing}")
+            return jsonify({"status": "error", "message": f"Missing CSV headers: {missing}"}), 400
+
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor()
+
+        books_added = 0
+        for row in csv_reader:
+            try:
+                total_copies = int(row['total_copies'])
+                cursor.execute(
+                    "INSERT INTO books (title, author, isbn, category, total_copies, available_copies) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (row['title'], row['author'], row['isbn'], row['category'], total_copies, total_copies)
+                )
+                books_added += 1
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Skipping invalid row: {row}, Error: {e}")
+                continue
+
+        connection.commit()
+        logger.info(f"Imported {books_added} books by admin {identity}")
+        return jsonify({"status": "success", "message": f"Imported {books_added} books successfully"}), 200
+    except Error as e:
+        logger.error(f"Database error during book import: {e}")
         return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     finally:
         if 'connection' in locals() and connection.is_connected():

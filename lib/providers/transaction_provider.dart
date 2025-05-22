@@ -8,6 +8,9 @@ class TransactionProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   double _totalFine = 0.0;
+  final http.Client _client;
+
+  TransactionProvider({http.Client? client}) : _client = client ?? http.Client();
 
   List<Transaction> get transactions => _transactions;
   bool get isLoading => _isLoading;
@@ -20,7 +23,7 @@ class TransactionProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await http.get(
+      final response = await _client.get(
         Uri.parse('http://localhost:5000/api/transactions'),
         headers: {
           'Authorization': 'Bearer $token',
@@ -49,6 +52,47 @@ class TransactionProvider with ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>?> fetchTransactionsByLibraryCard(String token, String libraryCardNo) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final response = await _client.get(
+        Uri.parse('http://localhost:5000/api/admin/user-transactions?library_card_no=$libraryCardNo'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+      print('fetchTransactionsByLibraryCard response: ${response.statusCode} ${response.body}');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        _transactions = (data['transactions'] as List)
+            .map((t) => Transaction.fromJson(t))
+            .toList();
+        return {
+          'user': data['user'],
+          'total_fine': data['total_fine'] as double,
+        };
+      } else if (response.statusCode == 401) {
+        _errorMessage = 'Unauthorized. Please log in again.';
+        throw Exception('Invalid token');
+      } else {
+        final errorData = jsonDecode(response.body);
+        _errorMessage = errorData['message'] ?? 'Failed to fetch transactions: ${response.statusCode}';
+        return null;
+      }
+    } catch (e) {
+      _errorMessage = 'Error fetching transactions by library card: $e';
+      print('fetchTransactionsByLibraryCard error: $e');
+      return null;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> fetchUserTransactions(String token) async {
     _isLoading = true;
     _errorMessage = null;
@@ -56,7 +100,7 @@ class TransactionProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await http.get(
+      final response = await _client.get(
         Uri.parse('http://localhost:5000/api/user/transactions'),
         headers: {
           'Authorization': 'Bearer $token',
@@ -92,7 +136,7 @@ class TransactionProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('http://localhost:5000/api/request-fine-payment'),
         headers: {
           'Authorization': 'Bearer $token',
@@ -101,7 +145,6 @@ class TransactionProvider with ChangeNotifier {
       );
       print('requestFinePayment response: ${response.statusCode} ${response.body}');
       if (response.statusCode == 200) {
-        // Refresh transactions to update total fine and payment status
         await fetchUserTransactions(token);
       } else if (response.statusCode == 401) {
         _errorMessage = 'Unauthorized. Please log in again.';
@@ -127,7 +170,7 @@ class TransactionProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('http://localhost:5000/api/admin/pay-fine'),
         headers: {
           'Authorization': 'Bearer $token',
@@ -140,7 +183,6 @@ class TransactionProvider with ChangeNotifier {
       );
       print('adminPayFine response: ${response.statusCode} ${response.body}');
       if (response.statusCode == 200) {
-        // Refresh transactions to reflect updated payment status
         await fetchTransactions(token);
       } else if (response.statusCode == 401) {
         _errorMessage = 'Unauthorized. Please log in again.';
@@ -162,7 +204,7 @@ class TransactionProvider with ChangeNotifier {
 
   Future<void> confirmBorrow(String token, int userId, int bookId, String action) async {
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('http://localhost:5000/api/borrow/confirm'),
         headers: {
           'Authorization': 'Bearer $token',
@@ -190,7 +232,7 @@ class TransactionProvider with ChangeNotifier {
 
   Future<void> confirmReturn(String token, int userId, int bookId, String action) async {
     try {
-      final response = await http.post(
+      final response = await _client.post(
         Uri.parse('http://localhost:5000/api/return/confirm'),
         headers: {
           'Authorization': 'Bearer $token',
