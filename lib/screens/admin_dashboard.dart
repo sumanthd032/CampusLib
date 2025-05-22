@@ -170,7 +170,7 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
         child: AlertDialog(
           title: Text('Approve Fine Payment', style: GoogleFonts.poppins(color: AppColors.primary)),
           content: Text(
-            'User $userId has requested to pay a fine of \$${totalFine.toStringAsFixed(2)}. Approve or reject this request?',
+            'User $userId has requested to pay a fine of ${totalFine.toStringAsFixed(2)} rupees. Approve or reject this request?',
             style: GoogleFonts.poppins(),
           ),
           actions: [
@@ -363,6 +363,146 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
             },
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
             child: Text('Add', style: GoogleFonts.poppins()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditBookDialog(Book book) {
+    // Pre-fill the text controllers with the book's current details
+    _titleController.text = book.title;
+    _authorController.text = book.author;
+    _isbnController.text = book.isbn;
+    _categoryController.text = book.category;
+    _copiesController.text = book.totalCopies.toString();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit Book', style: GoogleFonts.poppins(color: AppColors.primary)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _titleController,
+                decoration: InputDecoration(
+                  labelText: 'Title',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              SizedBox(height: 10),
+              TextField(
+                controller: _authorController,
+                decoration: InputDecoration(
+                  labelText: 'Author',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              SizedBox(height: 10),
+              TextField(
+                controller: _isbnController,
+                decoration: InputDecoration(
+                  labelText: 'ISBN',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              SizedBox(height: 10),
+              TextField(
+                controller: _categoryController,
+                decoration: InputDecoration(
+                  labelText: 'Category',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              SizedBox(height: 10),
+              TextField(
+                controller: _copiesController,
+                decoration: InputDecoration(
+                  labelText: 'Total Copies (Available: ${book.availableCopies})',
+                  border: OutlineInputBorder(),
+                  helperText: 'Note: Available copies will not change unless adjusted by transactions.',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _titleController.clear();
+              _authorController.clear();
+              _isbnController.clear();
+              _categoryController.clear();
+              _copiesController.clear();
+              Navigator.pop(context);
+            },
+            child: Text('Cancel', style: GoogleFonts.poppins(color: AppColors.error)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final newTotalCopies = int.tryParse(_copiesController.text);
+              if (newTotalCopies == null || newTotalCopies < book.availableCopies) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Total copies cannot be less than available copies (${book.availableCopies}).'),
+                    backgroundColor: AppColors.error,
+                  ),
+                );
+                return;
+              }
+
+              setState(() {
+                _isLoading = true;
+              });
+              try {
+                final bookProvider = Provider.of<BookProvider>(context, listen: false);
+                final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                final updatedBook = Book(
+                  bookId: book.bookId,
+                  title: _titleController.text,
+                  author: _authorController.text,
+                  isbn: _isbnController.text,
+                  category: _categoryController.text,
+                  totalCopies: newTotalCopies,
+                  availableCopies: book.availableCopies, // Preserve available copies
+                );
+                await bookProvider.updateBook(book.bookId, updatedBook, authProvider.token!);
+                Navigator.pop(context);
+                _titleController.clear();
+                _authorController.clear();
+                _isbnController.clear();
+                _categoryController.clear();
+                _copiesController.clear();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Book updated successfully!'),
+                    backgroundColor: AppColors.accent,
+                  ),
+                );
+              } catch (e) {
+                if (e.toString().contains('Invalid token')) {
+                  final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                  await authProvider.logout();
+                  Navigator.pushReplacementNamed(context, '/login');
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error updating book: $e'),
+                      backgroundColor: AppColors.error,
+                    ),
+                  );
+                }
+              } finally {
+                setState(() {
+                  _isLoading = false;
+                });
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+            child: Text('Update', style: GoogleFonts.poppins()),
           ),
         ],
       ),
@@ -791,41 +931,54 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
                                                 'Author: ${book.author}\nCategory: ${book.category}\nAvailable: ${book.availableCopies}/${book.totalCopies}',
                                                 style: GoogleFonts.poppins(fontSize: 14),
                                               ),
-                                              trailing: IconButton(
-                                                icon: Icon(Icons.delete, color: AppColors.error),
-                                                onPressed: () async {
-                                                  setState(() {
-                                                    _isLoading = true;
-                                                  });
-                                                  try {
-                                                    await bookProvider.deleteBook(
-                                                      book.bookId,
-                                                      authProvider.token!,
-                                                    );
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      SnackBar(
-                                                        content: Text('Book deleted successfully!'),
-                                                        backgroundColor: AppColors.accent,
-                                                      ),
-                                                    );
-                                                  } catch (e) {
-                                                    if (e.toString().contains('Invalid token')) {
-                                                      await authProvider.logout();
-                                                      Navigator.pushReplacementNamed(context, '/login');
-                                                    } else {
-                                                      ScaffoldMessenger.of(context).showSnackBar(
-                                                        SnackBar(
-                                                          content: Text('Error deleting book: $e'),
-                                                          backgroundColor: AppColors.error,
-                                                        ),
-                                                      );
-                                                    }
-                                                  } finally {
-                                                    setState(() {
-                                                      _isLoading = false;
-                                                    });
-                                                  }
-                                                },
+                                              trailing: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  IconButton(
+                                                    icon: Icon(Icons.edit, color: AppColors.primary),
+                                                    onPressed: () {
+                                                      _showEditBookDialog(book);
+                                                    },
+                                                    tooltip: 'Edit Book',
+                                                  ),
+                                                  IconButton(
+                                                    icon: Icon(Icons.delete, color: AppColors.error),
+                                                    onPressed: () async {
+                                                      setState(() {
+                                                        _isLoading = true;
+                                                      });
+                                                      try {
+                                                        await bookProvider.deleteBook(
+                                                          book.bookId,
+                                                          authProvider.token!,
+                                                        );
+                                                        ScaffoldMessenger.of(context).showSnackBar(
+                                                          SnackBar(
+                                                            content: Text('Book deleted successfully!'),
+                                                            backgroundColor: AppColors.accent,
+                                                          ),
+                                                        );
+                                                      } catch (e) {
+                                                        if (e.toString().contains('Invalid token')) {
+                                                          await authProvider.logout();
+                                                          Navigator.pushReplacementNamed(context, '/login');
+                                                        } else {
+                                                          ScaffoldMessenger.of(context).showSnackBar(
+                                                            SnackBar(
+                                                              content: Text('Error deleting book: $e'),
+                                                              backgroundColor: AppColors.error,
+                                                            ),
+                                                          );
+                                                        }
+                                                      } finally {
+                                                        setState(() {
+                                                          _isLoading = false;
+                                                        });
+                                                      }
+                                                    },
+                                                    tooltip: 'Delete Book',
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                           ),
@@ -918,7 +1071,7 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
                                                 ),
                                               ),
                                               subtitle: Text(
-                                                'Status: ${transaction.status} | Fine: \$${transaction.fine}',
+                                                'Status: ${transaction.status} | Fine: ${transaction.fine} rupees ',
                                                 style: GoogleFonts.poppins(fontSize: 14),
                                               ),
                                               children: [
@@ -964,7 +1117,7 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
                                                               ),
                                                             ),
                                                             child: Text(
-                                                              'Process Fine Payment (\$${totalPendingFine.toStringAsFixed(2)})',
+                                                              'Process Fine Payment (${totalPendingFine.toStringAsFixed(2)} rupees)',
                                                               style: GoogleFonts.poppins(),
                                                             ),
                                                           ),
