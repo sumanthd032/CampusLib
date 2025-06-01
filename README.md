@@ -1,52 +1,41 @@
-
-# CampusLib - Library Management System
+# CampusLib Library Management System
 
 ## Overview
-CampusLib is a library management system designed to streamline book borrowing and returning processes for university libraries. It features a Flask backend and a Flutter frontend, providing distinct interfaces for readers (students) and admins (librarians). Key functionalities include user authentication, book management, transaction tracking (borrow/return), and QR code scanning for seamless transactions.
+CampusLib is a modern library management system designed for university libraries, enabling efficient book borrowing, returning, and fine management. Built with a Flutter frontend, Flask backend, and MySQL database, it supports two user roles: Readers (students/faculty) and Admins (librarians). The system leverages QR code-based workflows for seamless transactions and enforces role-based access control using JWT authentication.
+
+**Purpose:** Streamline library operations with a user-friendly, cross-platform app.  
+**Technologies:**
+- **Frontend:** Flutter (Dart) - Cross-platform mobile app
+- **Backend:** Flask (Python) - RESTful API
+- **Database:** MySQL - Relational data storage
+- **Security:** JWT (`flask_jwt_extended`), `bcrypt` for password hashing
+- **Libraries:** `qr_flutter`, `qr_code_scanner`, `animate_do`, `google_fonts`
 
 ## Features
-- **User Authentication**: Secure login and registration for readers and admins using JWT.
-- **Book Management**: Admins can add, update, and delete books; readers can browse and search books.
-- **Borrowing & Returning**: Readers can request to borrow books via QR codes; admins can confirm transactions by scanning QR codes.
-- **Transaction History**: Track borrowing and returning history for both readers and admins.
-- **Responsive UI**: Built with Flutter for a smooth cross-platform experience.
 
-## Tech Stack
-- **Backend**: Flask (Python), MySQL, Flask-JWT-Extended for authentication
-- **Frontend**: Flutter (Dart)
-- **Dependencies**:
-  - **Backend**: `flask`, `flask-jwt-extended`, `flask-cors`, `mysql-connector-python`, `bcrypt`
-  - **Frontend**: `http`, `provider`, `flutter_secure_storage`, `qr_code_scanner`, `qr_flutter`, `google_fonts`, `animate_do`
+### For Readers
+- **Browse Books:** Search and filter books by title, author, or category.
+- **Borrow/Return Books:** Use QR codes to request and confirm borrowing/returning.
+- **Transaction History:** View borrowing history with fines.
+- **Fine Management:** Request payment for overdue fines ($1/day after 14 days).
 
-## Project Structure
-```
-CampusLib/
-├── app.py                    # Flask backend server
-├── lib/
-│   ├── constants/
-│   │   └── app_colors.dart   # App-wide constants (colors, API base URL)
-│   ├── models/
-│   │   ├── book.dart         # Book model
-│   │   ├── user.dart         # User model
-│   │   └── transaction.dart  # Transaction model
-│   ├── providers/
-│   │   ├── auth_provider.dart     # Manages authentication state
-│   │   ├── book_provider.dart     # Manages book-related operations
-│   │   └── transaction_provider.dart # Manages transaction operations
-│   ├── screens/
-│   │   ├── login_screen.dart      # Login screen for users
-│   │   ├── admin_dashboard.dart   # Admin dashboard for managing books and transactions
-│   │   └── reader_dashboard.dart  # Reader dashboard for browsing and borrowing books
-├── pubspec.yaml              # Flutter dependencies
-└── README.md                 # Project documentation
-```
+### For Admins
+- **User Management:** Create reader accounts, view user transactions.
+- **Book Management:** Add, edit, delete, and import books via CSV.
+- **Transaction Management:** Confirm borrow/return requests via QR scanning.
+- **Fine Approval:** Approve or reject fine payment requests.
+
+### General Features
+- **QR Code Workflow:** Simplifies borrow/return confirmation.
+- **Modern UI:** Animations, custom fonts (`GoogleFonts.poppins`), gradient themes.
+- **Security:** Role-based access with JWT, password hashing with bcrypt.
 
 ## Prerequisites
-- Python 3.8+ (for the backend)
-- Flutter 3.0+ (for the frontend)
-- MySQL (for the database)
-- Git (for version control)
-- A code editor like VS Code or IntelliJ IDEA
+- Flutter SDK (v3.0 or later)
+- Python (v3.8 or later)
+- MySQL (v8.0 or later)
+- Node.js (optional)
+- Git
 
 ## Setup Instructions
 
@@ -57,28 +46,36 @@ cd campuslib
 ```
 
 ### 2. Backend Setup (Flask)
-- Install Python dependencies:
+
+#### Navigate:
+```bash
+cd backend
+```
+
+#### Create and activate virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install flask flask-jwt-extended flask-cors mysql-connector-python bcrypt
 ```
-- Create MySQL database:
+
+#### Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+#### Set environment variables in `.env`:
+```
+DB_HOST=localhost
+DB_USER=your_username
+DB_PASSWORD=your_password
+DB_NAME=campuslib_db
+JWT_SECRET_KEY=your_jwt_secret_key
+PORT=5000
+```
+
+#### Set up MySQL database:
 ```sql
-CREATE DATABASE campuslib;
-```
-- Update `app.py` configuration:
-```python
-db_config = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': 'Jaiho@123',
-    'database': 'campuslib'
-}
-```
-- Create tables in MySQL:
-```sql
-USE campuslib;
+CREATE DATABASE campuslib_db;
 
 CREATE TABLE users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -86,14 +83,14 @@ CREATE TABLE users (
     email VARCHAR(255) UNIQUE NOT NULL,
     library_card_no VARCHAR(50) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
-    user_type ENUM('reader', 'admin') DEFAULT 'reader'
+    user_type ENUM('reader', 'admin') NOT NULL
 );
 
 CREATE TABLE books (
     book_id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     author VARCHAR(255) NOT NULL,
-    isbn VARCHAR(13) NOT NULL,
+    isbn VARCHAR(13) UNIQUE NOT NULL,
     category VARCHAR(50) NOT NULL,
     total_copies INT NOT NULL,
     available_copies INT NOT NULL
@@ -104,83 +101,123 @@ CREATE TABLE borrow_transactions (
     user_id INT NOT NULL,
     book_id INT NOT NULL,
     borrow_date DATETIME NOT NULL,
+    due_date DATETIME NOT NULL,
     return_date DATETIME,
-    status ENUM('borrowed', 'returned') DEFAULT 'borrowed',
+    status ENUM('borrowed', 'returned') NOT NULL,
+    fine DECIMAL(10,2) DEFAULT 0,
+    fine_paid DECIMAL(10,2) DEFAULT 0,
+    payment_status ENUM('pending', 'approved', 'rejected'),
     FOREIGN KEY (user_id) REFERENCES users(user_id),
     FOREIGN KEY (book_id) REFERENCES books(book_id)
 );
 ```
-- Run Flask server:
+
+#### Insert default admin user:
+```sql
+INSERT INTO users (name, email, library_card_no, password, user_type)
+VALUES ('Admin', 'admin@university.com', 'ADMIN-001', '<hashed_password>', 'admin');
+```
+
+> Generate bcrypt hash:
+```python
+import bcrypt
+print(bcrypt.hashpw("admin123".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'))
+```
+
+#### Run the backend:
 ```bash
 python app.py
 ```
 
 ### 3. Frontend Setup (Flutter)
-- Install Flutter dependencies:
+
 ```bash
+cd frontend
 flutter pub get
 ```
-- Run the app:
+
+#### Configure API URL in `frontend/lib/constants/colors.dart`:
+```dart
+const String baseUrl = 'http://localhost:5000/api';
+```
+
+#### Run the app:
 ```bash
 flutter run
 ```
-> Note: If using a physical device, update API base URL in `lib/constants/app_colors.dart`
 
 ## Usage
 
-### 1. Register/Login
-- Choose Reader or Admin mode
-- Use `/api/register` via Postman to register:
-```json
-POST http://localhost:5000/api/register
-{
-    "name": "John Doe",
-    "email": "john@example.com",
-    "library_card_no": "LIB123",
-    "password": "password123",
-    "user_type": "reader"
-}
-```
+### Reader
+- Login using library card number and password
+- Browse books
+- Borrow/return using QR codes
+- View transaction history
+- Request fine payments
 
-### 2. Reader Dashboard
-- Browse/search books
-- Request to borrow via QR
-- Show QR to admin to confirm
-- View and return books
-
-### 3. Admin Dashboard
-- Add, update, delete books
-- Scan QR codes to confirm transactions
-- View all transactions
+### Admin
+- Login using email/password
+- Manage readers, books, and transactions
+- Scan QR codes to confirm actions
+- Approve/reject fines
 
 ## API Endpoints
-- `POST /api/register`: Register a new user
-- `POST /api/login`: Authenticate and get JWT token
-- `GET /api/books`: Fetch all books
-- `POST /api/books`: Add a new book (admin)
-- `DELETE /api/books/:id`: Delete a book (admin)
-- `GET /api/categories`: Get all categories
-- `POST /api/borrow/request`: Borrow request
-- `POST /api/borrow/confirm`: Confirm borrow (admin)
-- `POST /api/return/confirm`: Confirm return (admin)
-- `GET /api/transactions`: All transactions (admin)
-- `GET /api/user/transactions`: Reader's transactions
 
-## Known Issues
-- API calls use `localhost` (won’t work on physical devices without IP update)
-- CORS allows all origins (restrict in production)
+### Authentication
+- `POST /api/register`
+- `POST /api/login`
 
-## Recent Changes
-- Fixed JWT Subject Error (user_id to string)
-- Fixed Flutter setState error with `addPostFrameCallback`
+### Books
+- `GET /api/books`
+- `POST /api/books`
+- `PUT /api/books/<book_id>`
+- `DELETE /api/books/<book_id>`
+
+### Transactions
+- `POST /api/borrow/request`
+- `POST /api/borrow/confirm`
+- `POST /api/return/request`
+- `POST /api/return/confirm`
+- `GET /api/user/transactions`
+- `GET /api/transactions`
+
+### Fines
+- `POST /api/request-fine-payment`
+- `POST /api/admin/pay-fine`
+
+### Admin
+- `POST /api/admin/create-reader`
+- `POST /api/admin/import-books`
+
+## Security
+- JWT-based authentication
+- Role-based access control
+- Password hashing with bcrypt
+- Input validation & error handling
+
+## Future Enhancements
+- Push notifications
+- Analytics dashboard
+- Soft deletion
+- Multi-language support
 
 ## Contributing
+1. Fork the repository.
+2. Create a new branch:
 ```bash
-fork → branch → commit → push → pull request
+git checkout -b feature-branch
+```
+3. Commit changes:
+```bash
+git commit -m "Add feature"
+```
+4. Push and create a pull request:
+```bash
+git push origin feature-branch
 ```
 
 ## License
-MIT License - see LICENSE
+Educational purposes only.
 
 ## Contact
-For support, contact: sumanthd032@gmail.com
+For issues or inquiries, contact the project maintainer.

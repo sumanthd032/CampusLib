@@ -1243,7 +1243,7 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
                                                 Text('Name: ${_searchedUser!['name']}', style: GoogleFonts.poppins()),
                                                 Text('Email: ${_searchedUser!['email']}', style: GoogleFonts.poppins()),
                                                 Text('Library Card: ${_searchedUser!['library_card_no']}', style: GoogleFonts.poppins()),
-                                                Text('Total Fine: \$${_searchedUserTotalFine?.toStringAsFixed(2) ?? '0.00'}', style: GoogleFonts.poppins()),
+                                                Text('Total Fine: ${_searchedUserTotalFine?.toStringAsFixed(2) ?? '0.00'}', style: GoogleFonts.poppins()),
                                               ],
                                             ),
                                           ),
@@ -1277,7 +1277,7 @@ class _AdminDashboardState extends State<AdminDashboard> with SingleTickerProvid
                                                           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                                                         ),
                                                         subtitle: Text(
-                                                          'Status: ${transaction.status}\nFine: \$${transaction.fine}',
+                                                          'Status: ${transaction.status}\nFine: ${transaction.fine}',
                                                           style: GoogleFonts.poppins(),
                                                         ),
                                                       ),

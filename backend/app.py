@@ -243,6 +243,11 @@ def import_books():
         for row in csv_reader:
             try:
                 total_copies = int(row['total_copies'])
+                # Check for duplicate ISBN
+                cursor.execute("SELECT * FROM books WHERE isbn = %s", (row['isbn'],))
+                if cursor.fetchone():
+                    logger.warning(f"Skipping book with duplicate ISBN: {row['isbn']}")
+                    continue
                 cursor.execute(
                     "INSERT INTO books (title, author, isbn, category, total_copies, available_copies) VALUES (%s, %s, %s, %s, %s, %s)",
                     (row['title'], row['author'], row['isbn'], row['category'], total_copies, total_copies)
@@ -349,6 +354,12 @@ def add_book():
         connection = mysql.connector.connect(**db_config)
         cursor = connection.cursor()
 
+        # Check for duplicate ISBN
+        cursor.execute("SELECT * FROM books WHERE isbn = %s", (isbn,))
+        if cursor.fetchone():
+            logger.warning(f"Add book failed: ISBN {isbn} already exists")
+            return jsonify({"status": "error", "message": "ISBN already exists"}), 400
+
         cursor.execute(
             "INSERT INTO books (title, author, isbn, category, total_copies, available_copies) VALUES (%s, %s, %s, %s, %s, %s)",
             (title, author, isbn, category, total_copies, total_copies)
@@ -358,6 +369,68 @@ def add_book():
         return jsonify({"status": "success", "message": "Book added successfully"}), 201
     except Error as e:
         logger.error(f"Database error adding book: {e}")
+        return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+@app.route('/api/books/<int:book_id>', methods=['PUT'])
+@jwt_required()
+def update_book(book_id):
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if claims['user_type'] != 'admin':
+        logger.warning(f"Update book failed: Admin access required for user {identity}")
+        return jsonify({"status": "error", "message": "Admin access required"}), 403
+
+    try:
+        data = request.get_json()
+        title = data.get('title')
+        author = data.get('author')
+        isbn = data.get('isbn')
+        category = data.get('category')
+        total_copies = data.get('total_copies')
+
+        if not all([title, author, isbn, category, total_copies]):
+            logger.warning("Update book failed: Missing required fields")
+            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor(dictionary=True)
+
+        # Fetch the current book to validate total_copies and check for duplicate ISBN
+        cursor.execute("SELECT * FROM books WHERE book_id = %s", (book_id,))
+        book = cursor.fetchone()
+        if not book:
+            logger.warning(f"Update book failed: Book {book_id} not found")
+            return jsonify({"status": "error", "message": "Book not found"}), 404
+
+        # Validate total_copies against available_copies
+        if total_copies < book['available_copies']:
+            logger.warning(f"Update book failed: Total copies {total_copies} cannot be less than available copies {book['available_copies']}")
+            return jsonify({"status": "error", "message": f"Total copies cannot be less than available copies ({book['available_copies']})"}), 400
+
+        # Check for duplicate ISBN (excluding the current book)
+        cursor.execute("SELECT * FROM books WHERE isbn = %s AND book_id != %s", (isbn, book_id))
+        if cursor.fetchone():
+            logger.warning(f"Update book failed: ISBN {isbn} already exists")
+            return jsonify({"status": "error", "message": "ISBN already exists"}), 400
+
+        # Update the book
+        cursor.execute(
+            "UPDATE books SET title = %s, author = %s, isbn = %s, category = %s, total_copies = %s WHERE book_id = %s",
+            (title, author, isbn, category, total_copies, book_id)
+        )
+        if cursor.rowcount == 0:
+            logger.warning(f"Update book failed: Book {book_id} not updated")
+            return jsonify({"status": "error", "message": "Book not updated"}), 500
+
+        connection.commit()
+        logger.info(f"Book updated: {book_id}, Title: {title}")
+        return jsonify({"status": "success", "message": "Book updated successfully"}), 200
+    except Error as e:
+        logger.error(f"Database error updating book: {e}")
         return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     finally:
         if 'connection' in locals() and connection.is_connected():
@@ -477,7 +550,8 @@ def confirm_borrow():
         connection = mysql.connector.connect(**db_config)
         cursor = connection.cursor(dictionary=True)
 
-        cursor.execute("SELECT * FROM books WHERE book_id = %s AND available_copies > 0", (book_id,))
+        # Fetch book and validate availability with a lock to prevent race conditions
+        cursor.execute("SELECT * FROM books WHERE book_id = %s AND available_copies > 0 FOR UPDATE", (book_id,))
         book = cursor.fetchone()
         if not book:
             logger.warning(f"Borrow confirm failed: Book {book_id} not available")
@@ -505,6 +579,54 @@ def confirm_borrow():
         return jsonify({"status": "success", "message": "Borrow confirmed"}), 200
     except Error as e:
         logger.error(f"Database error confirming borrow: {e}")
+        return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+@app.route('/api/return/request', methods=['POST'])
+@jwt_required()
+def request_return():
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if claims['user_type'] != 'reader':
+        logger.warning(f"Return request failed: Reader access required for user {identity}")
+        return jsonify({"status": "error", "message": "Reader access required"}), 403
+
+    try:
+        data = request.get_json()
+        book_id = data.get('book_id')
+
+        connection = mysql.connector.connect(**db_config)
+        cursor = connection.cursor(dictionary=True)
+
+        # Check if the user has an active borrow transaction for this book
+        cursor.execute(
+            "SELECT * FROM borrow_transactions WHERE user_id = %s AND book_id = %s AND status = 'borrowed'",
+            (identity, book_id)
+        )
+        transaction = cursor.fetchone()
+        if not transaction:
+            logger.warning(f"Return request failed: No active borrow transaction for user {identity}, book {book_id}")
+            return jsonify({"status": "error", "message": "No active borrow transaction found"}), 404
+
+        # Verify the book exists
+        cursor.execute("SELECT * FROM books WHERE book_id = %s", (book_id,))
+        book = cursor.fetchone()
+        if not book:
+            logger.warning(f"Return request failed: Book {book_id} not found")
+            return jsonify({"status": "error", "message": "Book not found"}), 404
+
+        qr_data = {
+            "user_id": identity,
+            "book_id": book_id,
+            "action": "return"
+        }
+        logger.info(f"Return request generated for user {identity}, book {book_id}")
+        return jsonify({"status": "success", "qr_data": qr_data}), 200
+    except Error as e:
+        logger.error(f"Database error during return request: {e}")
         return jsonify({"status": "error", "message": f"Database error: {e}"}), 500
     finally:
         if 'connection' in locals() and connection.is_connected():

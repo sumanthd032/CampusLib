@@ -21,6 +21,7 @@ class CampusLibApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => TransactionProvider()),
       ],
       child: MaterialApp(
+        debugShowCheckedModeBanner: false,
         title: 'CampusLib',
         theme: ThemeData(
           primarySwatch: Colors.blue,

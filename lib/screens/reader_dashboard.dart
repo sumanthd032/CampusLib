@@ -134,7 +134,7 @@ class _ReaderDashboardState extends State<ReaderDashboard> with SingleTickerProv
             style: GoogleFonts.poppins(color: AppColors.primary),
           ),
           content: Text(
-            'You have a fine of \$${totalFine.toStringAsFixed(2)}. Request admin approval to pay this fine?',
+            'You have a fine of ${totalFine.toStringAsFixed(2)} rupees. Request admin approval to pay this fine?',
             style: GoogleFonts.poppins(),
           ),
           actions: [
@@ -272,7 +272,7 @@ class _ReaderDashboardState extends State<ReaderDashboard> with SingleTickerProv
                                   child: Text(
                                     hasPendingRequest
                                         ? 'Your fine payment request is pending admin approval.'
-                                        : 'You have an overdue fine of \$${transactionProvider.totalFine.toStringAsFixed(2)}. Request admin approval to pay.',
+                                        : 'You have an overdue fine of ${transactionProvider.totalFine.toStringAsFixed(2)} rupees. Request admin approval to pay.',
                                     style: GoogleFonts.poppins(color: AppColors.error, fontSize: 14),
                                   ),
                                 ),
@@ -495,7 +495,7 @@ class _ReaderDashboardState extends State<ReaderDashboard> with SingleTickerProv
                                   child: Text(
                                     hasPendingRequest
                                         ? 'Your fine payment request is pending admin approval.'
-                                        : 'You have an overdue fine of \$${transactionProvider.totalFine.toStringAsFixed(2)}. Request admin approval to pay.',
+                                        : 'You have an overdue fine of ${transactionProvider.totalFine.toStringAsFixed(2)}. Request admin approval to pay.',
                                     style: GoogleFonts.poppins(color: AppColors.error, fontSize: 14),
                                   ),
                                 ),
@@ -590,7 +590,7 @@ class _ReaderDashboardState extends State<ReaderDashboard> with SingleTickerProv
                                                     ),
                                                   ),
                                                   subtitle: Text(
-                                                    'Author: ${book.author}\nBorrowed on: ${transaction.borrowDate}\nDue: ${transaction.dueDate ?? 'N/A'}\nFine: \$${transaction.fine.toStringAsFixed(2)}${transaction.finePaid ? ' (Paid)' : transaction.paymentStatus != null ? ' (${transaction.paymentStatus})' : ''}',
+                                                    'Author: ${book.author}\nBorrowed on: ${transaction.borrowDate}\nDue: ${transaction.dueDate ?? 'N/A'}\nFine: ${transaction.fine.toStringAsFixed(2)}${transaction.finePaid ? ' (Paid)' : transaction.paymentStatus != null ? ' (${transaction.paymentStatus})' : ''}',
                                                     style: GoogleFonts.poppins(fontSize: 14),
                                                   ),
                                                   trailing: ElevatedButton(
